@@ -131,7 +131,7 @@ final class Bootstrap
       }
       // 动态路由配置
       if (method_exists($controllerClass, '__router')) {
-        $routers = call_user_func(array($controllerClass, '__router'), $paths);
+        $routers = call_user_func([ $controllerClass, '__router' ], $paths);
         if ($routers === E_404) {
           throw new E404Exception('Router is invalid.');
         } else if (is_array($routers)) {
@@ -230,27 +230,60 @@ final class Bootstrap
     }
     echo ob_get_clean();
   }
+
+  public static function getModel($name)
+  {
+    static $list = [];
+    $name = strtolower($name);
+    if (!isset($list[$name])) {
+      $pathConfig = Config::get('path');
+      $modelFile =\AZALEA_ROOT . '/' .
+          ($pathConfig['basepath'] != '' ? ($pathConfig['basepath'] . '/') : '') .
+          $pathConfig['models'] . '/' . $name . '.php';
+      if (!is_file($modelFile)) {
+        throw new Exception('Model file not found.');
+      }
+      require($modelFile);
+      $modelClass = ucfirst($name) . 'Model';
+      if (!class_exists($modelClass, false) || !is_subclass_of($modelClass, __NAMESPACE__ . '\Model')) {
+        throw new Exception('Model class not found.');
+      }
+      $list[$name] = new $modelClass();
+    }
+    return $list[$name];
+  }
 }
 
 class Controller
 {
   protected $req, $res;
+  private $_view = null;
 
   final public function __construct()
   {
-    $this->req = new Request();
-    $this->res = new Response();
+    $this->req = Request::getInstance();
+    $this->res = Response::getInstance();
     $this->__init();
   }
 
   protected function __init() {}
 
-  protected function getModel()
+  protected function getService()
   {
+    // TODO get service model
+  }
+
+  protected function getModel($name)
+  {
+    return Bootstrap::getModel($name);
   }
 
   protected function getView()
   {
+    if (!isset($this->_view)) {
+      $this->_view = new View();
+    }
+    return $this->_view;
   }
 
   protected function getSession()
@@ -261,6 +294,17 @@ class Controller
 
 final class Request
 {
+  private function __construct() {}
+
+  public static function getInstance()
+  {
+    static $instance = null;
+    if (!$instance) {
+      $instance = new self();
+    }
+    return $instance;
+  }
+
   public function getUri()
   {
     return Bootstrap::getUri();
@@ -306,6 +350,17 @@ final class Request
 
 final class Response
 {
+  private function __construct() {}
+
+  public static function getInstance()
+  {
+    static $instance = null;
+    if (!$instance) {
+      $instance = new self();
+    }
+    return $instance;
+  }
+
   public function gotoUrl($url)
   {
   }
@@ -360,21 +415,69 @@ final class Session
 
 abstract class Model
 {
+  public function __construct()
+  {
+    $this->__init();
+  }
+
+  protected function __init() {}
+
+  public function getModel($name)
+  {
+    return Bootstrap::getModel($name);
+  }
 }
 
-abstract class View
+final class View
 {
-  public function display($tpl, $vars = null)
+  private static $_tplPath = '';
+  private $_data = [];
+
+  public function __construct()
   {
-    echo $this->render($tpl, $vars);
+    $pathConfig = Config::get('path');
+    $theme = Config::get('theme');
+    self::$_tplPath = \AZALEA_ROOT . '/' .
+        ($pathConfig['basepath'] != '' ? ($pathConfig['basepath'] . '/') : '') .
+        $pathConfig['views'] .
+        ((isset($theme) && $theme != '') ? ('/' . $theme) : '');
+    $this->assign([
+      'tpldir' => url($pathConfig['static'] . '/' .
+          ((isset($theme) && $theme != '') ? ('/' . $theme) : '')),
+      'debug' => Config::get('debug'),
+    ]);
   }
 
   public function render($tpl, $vars = null)
   {
+    $filename = self::$_tplPath . '/' . $tpl . '.phtml';
+    if (!is_file($filename)) {
+      throw new Exception('View file "' . $tpl . '.phtml" not found.');
+    }
+    if (isset($vars) && is_array($vars)) {
+      $this->assign($vars);
+    }
+    extract($this->_data, EXTR_OVERWRITE);
+    ob_start();
+    include $filename;
+    return ob_get_clean();
   }
 
   public function assign($key, $value = null)
   {
+    if (is_array($key)) {
+      foreach ($key as $k => $value) {
+        $this->_data[$k] = $value;
+      }
+    } else {
+      $this->_data[$key] = $value;
+    }
+    return $this;
+  }
+
+  public function plain($text)
+  {
+    return htmlspecialchars($text, ENT_QUOTES);
   }
 }
 
@@ -406,6 +509,7 @@ final class Config
         'controllers' => 'controllers',
         'models' => 'models',
         'views' => 'views',
+        'static' => 'static',
       ];
       $config['service'] += [
         'timeout' => 10,
@@ -524,8 +628,3 @@ function url($path, $includeDomain = false)
 }
 
 function randomString($len, $type = null) {}
-
-function plain($text)
-{
-  return htmlspecialchars($text, ENT_QUOTES);
-}
