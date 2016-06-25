@@ -11,8 +11,8 @@ if (defined('\AZALEA_ENV')) {
 }
 define(__NAMESPACE__ . '\VERSION', '1.0.0');
 define(__NAMESPACE__ . '\REQUEST_TIME', isset($_SERVER['REQUEST_TIME']) ? $_SERVER['REQUEST_TIME'] : time());
-define(__NAMESPACE__ . '\E_404', 0);
-define(__NAMESPACE__ . '\E_500', -1);
+define(__NAMESPACE__ . '\E404', new E404Exception());
+define(__NAMESPACE__ . '\E500', new E500Exception());
 
 final class Bootstrap
 {
@@ -222,35 +222,15 @@ final class Bootstrap
   private function _process($result)
   {
     if (isset($result)) {
-      if (is_string($result)) {
-        echo $result;
-      } else if ($result === E_404) {
-        throw new E404Exception('Page not found.');
+      if ($result instanceof Exception) {
+        throw $result;
+      } else if (is_array($result)) {
+        echo json_encode($result);
+      } else {
+        echo strval($result);
       }
     }
     echo ob_get_clean();
-  }
-
-  public static function getModel($name)
-  {
-    static $list = [];
-    $name = strtolower($name);
-    if (!isset($list[$name])) {
-      $pathConfig = Config::get('path');
-      $modelFile =\AZALEA_ROOT . '/' .
-          ($pathConfig['basepath'] != '' ? ($pathConfig['basepath'] . '/') : '') .
-          $pathConfig['models'] . '/' . $name . '.php';
-      if (!is_file($modelFile)) {
-        throw new Exception('Model file not found.');
-      }
-      require($modelFile);
-      $modelClass = ucfirst($name) . 'Model';
-      if (!class_exists($modelClass, false) || !is_subclass_of($modelClass, __NAMESPACE__ . '\Model')) {
-        throw new Exception('Model class not found.');
-      }
-      $list[$name] = new $modelClass();
-    }
-    return $list[$name];
   }
 }
 
@@ -275,7 +255,7 @@ class Controller
 
   protected function getModel($name)
   {
-    return Bootstrap::getModel($name);
+    return getModel($name);
   }
 
   protected function getView()
@@ -424,7 +404,7 @@ abstract class Model
 
   public function getModel($name)
   {
-    return Bootstrap::getModel($name);
+    return getModel($name);
   }
 }
 
@@ -592,7 +572,7 @@ final class E404Exception extends Exception
 
 final class E500Exception extends Exception
 {
-  public function __construct($message, $code = 500, $context = null)
+  public function __construct($message = '', $code = 500, $context = null)
   {
     parent::__construct($message, parent::E_ERROR, $code, $context);
     if (ENV == 'WEB') {
@@ -628,3 +608,25 @@ function url($path, $includeDomain = false)
 }
 
 function randomString($len, $type = null) {}
+
+function getModel($name)
+{
+  static $list = [];
+  $name = strtolower($name);
+  if (!isset($list[$name])) {
+    $pathConfig = Config::get('path');
+    $modelFile =\AZALEA_ROOT . '/' .
+        ($pathConfig['basepath'] != '' ? ($pathConfig['basepath'] . '/') : '') .
+        $pathConfig['models'] . '/' . $name . '.php';
+    if (!is_file($modelFile)) {
+      throw new Exception('Model file not found.');
+    }
+    require($modelFile);
+    $modelClass = ucfirst($name) . 'Model';
+    if (!class_exists($modelClass, false) || !is_subclass_of($modelClass, __NAMESPACE__ . '\Model')) {
+      throw new Exception('Model class not found.');
+    }
+    $list[$name] = new $modelClass();
+  }
+  return $list[$name];
+}
