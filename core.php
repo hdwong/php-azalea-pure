@@ -213,13 +213,10 @@ final class Bootstrap
           'action' => 'error',
           'arguments' => [ 'exception' => $e ],
         ]);
-        $this->_process($result);
-      } catch (Exception $ignoreEx) {
-        die($e->getMessage() . PHP_EOL);
-      }
-    } else {
-      die($e->getMessage() . PHP_EOL);
+        return $this->_process($result);
+      } catch (Exception $ignoreEx) {}
     }
+    die($e->getMessage() . PHP_EOL);
   }
 
   private function _process($result)
