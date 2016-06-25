@@ -224,7 +224,7 @@ final class Bootstrap
     if (isset($result)) {
       if ($result instanceof Exception) {
         throw $result;
-      } else if (is_array($result)) {
+      } else if (is_array($result) || is_object($result)) {
         echo json_encode($result);
       } else {
         echo strval($result);
