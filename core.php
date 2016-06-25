@@ -46,7 +46,7 @@ final class Bootstrap
     return self::$_route;
   }
 
-  public static function init($configFile)
+  public static function init($configFile = null)
   {
     timer();
     ob_start();
@@ -623,40 +623,42 @@ final class Config
 
   public static function load($filename)
   {
-    if (is_readable($filename)) {
+    $config = [];
+    if ($filename) {
+      if (!is_readable($filename)) {
+        die('Config file not found');
+      }
       $config = parse_ini_file($filename, true);
-      $config += [
-        'debug' => false,
-        'timezone' => 'PRC',
-        'theme' => null,
-        'session' => [],
-        'path' => [],
-        'service' => [],
-        'router' => [],
-      ];
-      $config['session'] += [
-        'name' => 'sid',
-        'lifetime' => 0,
-        'path' => null,
-        'domain' => null,
-      ];
-      $config['path'] += [
-        'basepath' => null,
-        'controllers' => 'controllers',
-        'models' => 'models',
-        'views' => 'views',
-        'static' => 'static',
-      ];
-      $config['service'] += [
-        'timeout' => 10,
-        'connecttimeout' => 2,
-        'retry' => 1,
-      ];
-      self::$_config = $config;
-    } else {
-      die('Config file not found');
     }
-    return self::$_config;
+    $config += [
+      'debug' => false,
+      'timezone' => 'PRC',
+      'theme' => null,
+      'session' => [],
+      'path' => [],
+      'service' => [],
+      'router' => [],
+    ];
+    $config['session'] += [
+      'name' => 'sid',
+      'lifetime' => 0,
+      'path' => null,
+      'domain' => null,
+    ];
+    $config['path'] += [
+      'basepath' => null,
+      'controllers' => 'controllers',
+      'models' => 'models',
+      'views' => 'views',
+      'static' => 'static',
+    ];
+    $config['service'] += [
+      'timeout' => 10,
+      'connecttimeout' => 2,
+      'retry' => 1,
+    ];
+    self::$_config = $config;
+    return $config;
   }
 
   public static function get($key = null, $default = null)
