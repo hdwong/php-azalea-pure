@@ -205,6 +205,9 @@ final class Bootstrap
     ob_clean();
     if (ENV == 'WEB') {
       try {
+        if ($e instanceof Exception) {
+          $e->setHeader();
+        }
         $result = $this->_dispatch([
           'controller' => 'error',
           'action' => 'error',
@@ -212,7 +215,7 @@ final class Bootstrap
         ]);
         $this->_process($result);
       } catch (Exception $ignoreEx) {
-        die($e->getMessage());
+        die($e->getMessage() . PHP_EOL);
       }
     } else {
       die($e->getMessage() . PHP_EOL);
@@ -408,6 +411,117 @@ abstract class Model
   }
 }
 
+abstract class ServiceModel extends Model
+{
+  // 对接 node_beauty 服务框架
+  protected $service = null;
+  private $_serviceUrl = null;
+
+  public function __construct()
+  {
+    $serviceConfig = Config::get('service');
+    if (!isset($serviceConfig['url']) || !isset($serviceConfig['token'])) {
+      throw new E500Exception('Service config is invalid.');
+    }
+    if (!isset($this->service)) {
+      // 未指定服务名, 通过类名获取
+      $this->service = strtolower(substr(get_class($this), 0, -5));
+    }
+    $this->_serviceUrl = trim($serviceConfig['url'], '/') . '/' . $this->service;
+    parent::__construct();
+  }
+
+  private function _exec($method, $url, $params = [], $buildQuery = true)
+  {
+    $ch = curl_init();
+    switch ($method) {
+      case 'GET':
+        curl_setopt($ch, CURLOPT_HTTPGET, true);
+        break;
+      case 'POST':
+      case 'PUT':
+      case 'DELETE':
+        if ($method == 'POST') {
+          curl_setopt($ch, CURLOPT_POST, true);
+        } else {
+          curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+        }
+        if ($buildQuery) {
+          curl_setopt($ch, CURLOPT_POSTFIELDS, preg_replace('/%5B[0-9]+%5D/simU', '', http_build_query($params)));
+        } else {
+          curl_setopt($ch, CURLOPT_POSTFIELDS, $params);
+        }
+        break;
+      default:
+        curl_close($ch);
+        return;
+    }
+    $serviceConfig = Config::get('service');
+    $headers = [
+      'token: ' . $serviceConfig['token'],
+      'accept-encoding: gzip',
+      'request-time: ' . REQUEST_TIME,
+    ];
+    curl_setopt_array($ch, [
+      CURLOPT_HTTPHEADER => $headers,
+      CURLOPT_RETURNTRANSFER => true,
+      CURLOPT_AUTOREFERER => true,
+      CURLOPT_FOLLOWLOCATION => true,
+      CURLOPT_TIMEOUT => $serviceConfig['timeout'],
+      CURLOPT_CONNECTTIMEOUT => $serviceConfig['connecttimeout'],
+      CURLOPT_URL => $this->_serviceUrl . '/' . $url,
+    ]);
+    $response = curl_exec($ch);
+    $httpInfo = curl_getinfo($ch);
+    curl_close($ch);
+
+    if ($response === false) {
+      throw new E500Exception('Service response is invalid.', 0, func_get_args());
+    } else {
+      $httpCode = $httpInfo['http_code'];
+      $httpContentType = $httpInfo['content_type'];
+      if (-1 == $httpInfo['download_content_length']) {
+        $response = gzdecode($response);
+      }
+      if ($httpContentType == 'application/json') {
+        $response = json_decode($response);
+      }
+      if ($httpCode !== 200) {
+        $error = isset($response->message) ? $response->message : $response;
+        if ($httpCode === 403) {
+          throw new E500Exception($error, 403, func_get_args());
+        } else if ($httpCode === 500) {
+          throw new E500Exception($error,
+              isset($response->code) ? $response->code : 500, func_get_args());
+        } else {
+          throw new E500Exception($error, func_get_args());
+        }
+      }
+      return isset($response->result) ? $response->result : $response;
+    }
+  }
+
+  protected function get($url)
+  {
+    return $this->_exec('GET', $url);
+  }
+
+  protected function post($url, $params = [], $buildQuery = true)
+  {
+    return $this->_exec('POST', $url, $params, $buildQuery);
+  }
+
+  protected function put($url, $params = [],  $buildQuery = true)
+  {
+    return $this->_exec('PUT', $url, $params, $buildQuery);
+  }
+
+  protected function del($url, $params = [],  $buildQuery = true)
+  {
+    return $this->_exec('DELETE', $url, $params, $buildQuery);
+  }
+}
+
 final class View
 {
   private static $_tplPath = '';
@@ -542,6 +656,8 @@ class Exception extends \Exception
   {
     return $this->_context;
   }
+
+  public function setHeader() {}
 }
 
 final class E404Exception extends Exception
@@ -554,9 +670,6 @@ final class E404Exception extends Exception
     parent::__construct($message, parent::E_WARNING, 404, $context);
     $this->_uri = Bootstrap::getUri();
     $this->_route = Bootstrap::getRoute();
-    if (ENV == 'WEB') {
-      header('HTTP/1.1 404 Not Found');
-    }
   }
 
   public function getUri()
@@ -568,6 +681,13 @@ final class E404Exception extends Exception
   {
     return $this->_route;
   }
+
+  public function setHeader()
+  {
+    if (ENV == 'WEB') {
+      header('HTTP/1.1 404 Not Found');
+    }
+  }
 }
 
 final class E500Exception extends Exception
@@ -575,6 +695,10 @@ final class E500Exception extends Exception
   public function __construct($message = '', $code = 500, $context = null)
   {
     parent::__construct($message, parent::E_ERROR, $code, $context);
+  }
+
+  public function setHeader()
+  {
     if (ENV == 'WEB') {
       header('HTTP/1.1 500 Internal Server Error');
     }
