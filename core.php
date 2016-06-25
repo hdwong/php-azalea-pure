@@ -11,8 +11,8 @@ if (defined('\AZALEA_ENV')) {
 }
 define(__NAMESPACE__ . '\VERSION', '1.0.0');
 define(__NAMESPACE__ . '\REQUEST_TIME', isset($_SERVER['REQUEST_TIME']) ? $_SERVER['REQUEST_TIME'] : time());
-define(__NAMESPACE__ . '\E404', new E404Exception());
-define(__NAMESPACE__ . '\E500', new E500Exception());
+define(__NAMESPACE__ . '\E404', -404);
+define(__NAMESPACE__ . '\E500', -505);
 
 final class Bootstrap
 {
@@ -155,14 +155,14 @@ final class Bootstrap
       if (!method_exists($controllerClass, $actionMethod)) {
         throw new E404Exception('Action method not found.');
       }
-      $result = $this->_dispatch();
+      $result = self::dispatch();
       $this->_process($result);
     } catch (\Exception $e) {
       $this->_errorDispatch($e);
     }
   }
 
-  private function _dispatch($route = null)
+  public static function dispatch($route = null)
   {
     if (!isset($route)) {
       $route = self::$_route;
@@ -189,7 +189,7 @@ final class Bootstrap
       }
     }
     if (!isset(self::$_instances[$controllerClass])) {
-      self::$_instances[$controllerClass] = new $controllerClass();
+      self::$_instances[$controllerClass] = new $controllerClass($route['controller']);
     }
     $controllerInstance = self::$_instances[$controllerClass];
     $actionMethod = $route['action'] . (ENV == 'WEB' ? 'Action' : ENV);
@@ -208,7 +208,7 @@ final class Bootstrap
         if ($e instanceof Exception) {
           $e->setHeader();
         }
-        $result = $this->_dispatch([
+        $result = self::dispatch([
           'controller' => 'error',
           'action' => 'error',
           'arguments' => [ 'exception' => $e ],
@@ -222,8 +222,10 @@ final class Bootstrap
   private function _process($result)
   {
     if (isset($result)) {
-      if ($result instanceof Exception) {
-        throw $result;
+      if ($result == E404) {
+        throw new E404Exception();
+      } else if ($result == E500) {
+        throw new E500Exception();
       } else if (is_array($result) || is_object($result)) {
         echo json_encode($result);
       } else {
@@ -236,26 +238,36 @@ final class Bootstrap
 
 class Controller
 {
-  protected $req, $res;
   private $_view = null;
+  private $_name = null;
 
-  final public function __construct()
+  final public function __construct($name)
   {
-    $this->req = Request::getInstance();
-    $this->res = Response::getInstance();
+    $this->_name = $name;
     $this->__init();
   }
 
   protected function __init() {}
+
+  public function __get($name)
+  {
+    if ($name == 'id') {
+      return $this->_name;
+    } else if ($name == 'req') {
+      return Request::getInstance($this);
+    } else if ($name == 'res') {
+      return Response::getInstance($this);
+    }
+  }
 
   protected function getService()
   {
     // TODO get service model
   }
 
-  protected function getModel($name)
+  protected function getModel($name, ...$args)
   {
-    return getModel($name);
+    return getModel($name, ...$args);
   }
 
   protected function getView()
@@ -274,15 +286,21 @@ class Controller
 
 final class Request
 {
-  private function __construct() {}
+  private $_inst = null;
 
-  public static function getInstance()
+  private function __construct($inst)
   {
-    static $instance = null;
-    if (!$instance) {
-      $instance = new self();
+    $this->_inst = $inst;
+  }
+
+  public static function getInstance(Controller $inst)
+  {
+    static $instances = [];
+    $id = get_class($inst);
+    if (!isset($instances[$id])) {
+      $instances[$id] = new self($inst);
     }
-    return $instance;
+    return $instances[$id];
   }
 
   public function getUri()
@@ -330,23 +348,47 @@ final class Request
 
 final class Response
 {
-  private function __construct() {}
+  private $_inst = null;
 
-  public static function getInstance()
+  private function __construct($inst)
   {
-    static $instance = null;
-    if (!$instance) {
-      $instance = new self();
-    }
-    return $instance;
+    $this->_inst = $inst;
   }
 
-  public function gotoUrl($url)
+  public static function getInstance(Controller $inst)
   {
+    static $instances = [];
+    $id = get_class($inst);
+    if (!isset($instances[$id])) {
+      $instances[$id] = new self($inst);
+    }
+    return $instances[$id];
+  }
+
+  public function gotoUrl($url, $httpCode = 302)
+  {
+    if (ENV != 'WEB') {
+      return;
+    }
+    if (strcasecmp('http://', substr($url, 0, 7)) && strcasecmp('https://', substr($url, 0, 8))) {
+      $url = url($url, false);
+    }
+    header('Location: ' . $url, true, $httpCode);
+    exit;
   }
 
   public function gotoRoute($route)
   {
+    $route += [
+      'folder'     => null,
+      'controller' => null,
+      'action'     => 'index',
+      'arguments'  => [],
+    ];
+    if (!isset($route['controller'])) {
+      $route['controller'] = $this->_inst->id;
+    }
+    return Bootstrap::dispatch($route);
   }
 
   public function getBody()
@@ -395,16 +437,19 @@ final class Session
 
 abstract class Model
 {
-  public function __construct()
+  protected $name = null;
+
+  public function __construct($name, ...$args)
   {
-    $this->__init();
+    $this->name = $name;
+    $this->__init(...$args);
   }
 
   protected function __init() {}
 
-  public function getModel($name)
+  public function getModel($name, ...$args)
   {
-    return getModel($name);
+    return getModel($name, ...$args);
   }
 }
 
@@ -414,18 +459,18 @@ abstract class ServiceModel extends Model
   protected $service = null;
   private $_serviceUrl = null;
 
-  public function __construct()
+  final public function __construct($name, ...$args)
   {
     $serviceConfig = Config::get('service');
     if (!isset($serviceConfig['url']) || !isset($serviceConfig['token'])) {
       throw new E500Exception('Service config is invalid.');
     }
     if (!isset($this->service)) {
-      // 未指定服务名, 通过类名获取
-      $this->service = strtolower(substr(get_class($this), 0, -5));
+      // 未指定服务名, 通过传入类名获取
+      $this->service = $name;
     }
     $this->_serviceUrl = trim($serviceConfig['url'], '/') . '/' . $this->service;
-    parent::__construct();
+    parent::__construct($name, ...$args);
   }
 
   private function _exec($method, $url, $params = [], $buildQuery = true)
@@ -730,7 +775,7 @@ function url($path, $includeDomain = false)
 
 function randomString($len, $type = null) {}
 
-function getModel($name)
+function getModel($name, ...$args)
 {
   static $list = [];
   $name = strtolower($name);
@@ -747,7 +792,7 @@ function getModel($name)
     if (!class_exists($modelClass, false) || !is_subclass_of($modelClass, __NAMESPACE__ . '\Model')) {
       throw new Exception('Model class not found.');
     }
-    $list[$name] = new $modelClass();
+    $list[$name] = new $modelClass($name, ...$args);
   }
   return $list[$name];
 }
