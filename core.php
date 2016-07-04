@@ -1,14 +1,6 @@
 <?php
 namespace Azalea;
 
-if (!defined('\AZALEA_ROOT')) {
-  die('AZALEA_ROOT constant is not defined');
-}
-if (defined('\AZALEA_ENV')) {
-  define(__NAMESPACE__ . '\ENV', \AZALEA_ENV);
-} else {
-  define(__NAMESPACE__ . '\ENV', 'WEB');
-}
 define(__NAMESPACE__ . '\VERSION', '1.0.0');
 define(__NAMESPACE__ . '\REQUEST_TIME', isset($_SERVER['REQUEST_TIME']) ? $_SERVER['REQUEST_TIME'] : time());
 define(__NAMESPACE__ . '\E404', -404);
@@ -25,6 +17,7 @@ final class Bootstrap
     'arguments'  => [],
   ];
   private static $_instances = [];
+  private static $_environ = 'WEB';
 
   public static function getBaseUri()
   {
@@ -46,25 +39,34 @@ final class Bootstrap
     return self::$_route;
   }
 
-  public static function init($configFile = null)
+  public static function getEnviron()
+  {
+    return self::$_environ;
+  }
+
+  public static function init($configFile = null, $environ = null)
   {
     timer();
     ob_start();
-    // 读取 configFile
+    // set environ
+    if (isset($environ)) {
+      self::$_environ = $environ;
+    }
+    // load config
     $config = Config::load($configFile);
-    // 打开错误提示
+    // set error reporting
     if ($config['debug']) {
       error_reporting(E_ALL);
       ini_set('display_errors', true);
     }
-    // 设置时区
+    // set timezone
     date_default_timezone_set($config['timezone']);
-    // 获取路径
+    // set uri
     self::$_baseUri = (isset($_SERVER['SCRIPT_NAME']) ?
         trim(dirname($_SERVER['SCRIPT_NAME']), '\\/') : '') . '/';
     self::$_uri = isset($_SERVER['PATH_INFO']) ?
         trim(preg_replace('/\/{2,}/', '/', $_SERVER['PATH_INFO']), '/') : '';
-    // 设置会话
+    // set session
     session_name($config['session']['name']);
     session_set_cookie_params($config['session']['lifetime'],
         isset($config['session']['path']) ? $config['session']['path'] : self::$_baseUri,
@@ -74,87 +76,54 @@ final class Bootstrap
 
   public function run()
   {
+    $folder = &self::$_route['folder'];
+    $controller = &self::$_route['controller'];
+    $action = &self::$_route['action'];
+    $arguments = &self::$_route['arguments'];
+    $uri = self::$_uri;
+    // static router
+    $staticRouters = Config::get('router');
+    if ($staticRouters) {
+      $path = $uri;
+      $pos = strlen($path);
+      do {
+        $key = strtolower($path);
+        if (array_key_exists($key, $staticRouters)) {
+          $uri = trim(preg_replace('/\/{2,}/', '/',
+              strval($staticRouters[$key])), '/') . substr($uri, $pos);
+          break;
+        }
+        $pos = strrpos($path, '/');
+        if ($pos) {
+          $path = substr($path, 0, $pos);
+        }
+      } while ($pos);
+      unset($path, $pos);
+    }
+    // paths
+    $paths = ($uri == '') ? [] : explode('/', $uri);
+    $pathConfig = Config::get('path');
+    $controllerPath = ($pathConfig['basepath'] != '' ? ($pathConfig['basepath'] . '/') : '') .
+        $pathConfig['controllers'];
+    // folder
+    if (isset($paths[0]) && is_dir($controllerPath . '/' . strtolower($paths[0]))) {
+      $folder = strtolower(array_shift($paths));
+      $controllerPath .= '/' . $folder;
+    }
+    // controller
+    if (isset($paths[0])) {
+      $controller = strtolower(array_shift($paths));
+    }
+    // action
+    if (isset($paths[0])) {
+      $action = strtolower(array_shift($paths));
+    }
+    // arguments
+    $arguments = $paths;
     try {
-      // 开启会话
+      // session
       session_start();
-      // 路由分析开始
-      $folder = &self::$_route['folder'];
-      $controller = &self::$_route['controller'];
-      $action = &self::$_route['action'];
-      $arguments = &self::$_route['arguments'];
-      $uri = self::$_uri;
-      // 静态路由配置
-      $staticRouters = Config::get('router');
-      if ($staticRouters) {
-        $path = $uri;
-        $pos = strlen($path);
-        do {
-          $key = strtolower($path);
-          if (array_key_exists($key, $staticRouters)) {
-            $uri = trim(preg_replace('/\/{2,}/', '/',
-                strval($staticRouters[$key])), '/') . substr($uri, $pos);
-            break;
-          }
-          $pos = strrpos($path, '/');
-          if ($pos) {
-            $path = substr($path, 0, $pos);
-          }
-        } while ($pos);
-        unset($path, $pos);
-      }
-      // 路径
-      $paths = ($uri == '') ? [] : explode('/', $uri);
-      $pathConfig = Config::get('path');
-      $controllerPath = \AZALEA_ROOT . '/' .
-          ($pathConfig['basepath'] != '' ? ($pathConfig['basepath'] . '/') : '') .
-          $pathConfig['controllers'];
-      // 是否存在 folder
-      if (isset($paths[0]) && is_dir($controllerPath . '/' . strtolower($paths[0]))) {
-        $folder = strtolower(array_shift($paths));
-        $controllerPath .= '/' . $folder;
-      }
-      // 是否存在 controller
-      if (isset($paths[0])) {
-        $controller = strtolower(array_shift($paths));
-      }
-      $controllerFile = $controllerPath . '/' . $controller . '.php';
-      if (!is_file($controllerFile)) {
-        throw new E404Exception('Controller file not found.');
-      }
-      // 加载 controller
-      require $controllerFile;
-      $controllerClass = (isset($folder) ? (ucfirst($folder)) : '') .
-          ucfirst($controller) . 'Controller';
-      if (!class_exists($controllerClass, false) ||
-          !is_subclass_of($controllerClass, __NAMESPACE__ . '\Controller')) {
-        throw new E404Exception('Controller class not found.');
-      }
-      // 动态路由配置
-      if (method_exists($controllerClass, '__router')) {
-        $routers = call_user_func([ $controllerClass, '__router' ], $paths);
-        if ($routers === E_404) {
-          throw new E404Exception('Router is invalid.');
-        } else if (is_array($routers)) {
-          foreach ($routers as $key => $value) {
-            self::$_route[$key] = $value;
-          }
-        }
-        unset($routers);
-      } else {
-        if (isset($paths[0])) {
-          $action = strtolower(array_shift($paths));
-        }
-        if ($action[0] == '_') {
-          throw new E404Exception('Action is invalid.');
-        }
-        // 参数
-        $arguments = $paths;
-      }
-      // 是否存在 action
-      $actionMethod = $action . (ENV == 'WEB' ? 'Action' : ENV);
-      if (!method_exists($controllerClass, $actionMethod)) {
-        throw new E404Exception('Action method not found.');
-      }
+      // dispatch
       $result = self::dispatch();
       $this->_process($result);
     } catch (\Exception $e) {
@@ -167,55 +136,70 @@ final class Bootstrap
     if (!isset($route)) {
       $route = self::$_route;
     }
-    // 检查路由
+    // check route
     $controllerClass = (isset($route['folder']) ?
         (ucfirst($route['folder'])) : '') . ucfirst($route['controller']) . 'Controller';
     if (!class_exists($controllerClass, false)) {
+      // load controller
       $pathConfig = Config::get('path');
-      $controllerPath = \AZALEA_ROOT . '/' .
-          ($pathConfig['basepath'] != '' ? ($pathConfig['basepath'] . '/') : '') .
+      $controllerPath = ($pathConfig['basepath'] != '' ? ($pathConfig['basepath'] . '/') : '') .
           $pathConfig['controllers'];
       if (isset($route['folder'])) {
         $controllerPath .= '/' . $route['folder'] ;
       }
       $controllerFile = $controllerPath . '/' . $route['controller'] . '.php';
       if (!is_file($controllerFile)) {
-        throw new E404Exception('Controller file not found.');
+        throw new E404Exception('Controller file `' . $route['controller'] . '` not found.');
       }
       require $controllerFile;
       if (!class_exists($controllerClass, false) ||
           !is_subclass_of($controllerClass, __NAMESPACE__ . '\Controller')) {
-        throw new E404Exception('Controller class not found.');
+        throw new E404Exception('Controller class `' . $controllerClass . '` not found.');
       }
     }
+    // new controller instance
     if (!isset(self::$_instances[$controllerClass])) {
       self::$_instances[$controllerClass] = new $controllerClass($route['controller']);
     }
     $controllerInstance = self::$_instances[$controllerClass];
-    $actionMethod = $route['action'] . (ENV == 'WEB' ? 'Action' : ENV);
-    if (!method_exists($controllerClass, $actionMethod)) {
-      throw new E404Exception('Action method not found.');
+    // dynamic router
+    if (method_exists($controllerInstance, '__router')) {
+      $routers = call_user_func([ $controllerInstance, '__router' ], array_merge([ $route['action'] ], $route['arguments']));
+      if ($routers === E404) {
+        throw new E404Exception('Router is invalid.');
+      } else if (is_array($routers)) {
+        foreach ($routers as $key => $value) {
+          if ($key == 'folder' || $key == 'controller') {
+            // avoid change folder and controller
+            continue;
+          }
+          $route[$key] = $value;
+        }
+      }
+      unset($routers);
     }
-    // 执行 action
+    $actionMethod = $route['callback'] ?? ($route['action'] . (self::$_environ == 'WEB' ? 'Action' : self::$_environ));
+    if (!method_exists($controllerInstance, $actionMethod)) {
+      throw new E404Exception('Action method `' . $actionMethod . '` not found.');
+    }
+    // execute action
     return call_user_func_array([ $controllerInstance, $actionMethod ], $route['arguments']);
   }
 
   private function _errorDispatch(\Exception $e)
   {
     ob_clean();
-    if (ENV == 'WEB') {
-      try {
-        if ($e instanceof Exception) {
-          $e->setHeader();
-        }
-        $result = self::dispatch([
-          'controller' => 'error',
-          'action' => 'error',
-          'arguments' => [ 'exception' => $e ],
-        ]);
-        return $this->_process($result);
-      } catch (Exception $ignoreEx) {}
-    }
+    try {
+      if ($e instanceof Exception) {
+        $e->setHeader();
+      }
+      $result = self::dispatch([
+        'controller' => 'error',
+        'action' => 'error',
+        'arguments' => [ $e ],
+      ]);
+      return $this->_process($result);
+    } catch (Exception $ignoreEx) {}
     die($e->getMessage() . PHP_EOL);
   }
 
@@ -258,11 +242,6 @@ class Controller
     } else if ($name == 'res') {
       return Response::getInstance($this);
     }
-  }
-
-  protected function getService()
-  {
-    // TODO get service model
   }
 
   protected function getModel($name, ...$args)
@@ -334,7 +313,7 @@ final class Request
     if (!isset($field)) {
       return $_GET;
     }
-    return key_exists($_GET[$field]) ? $_GET[$field] : $default;
+    return array_key_exists($field, $_GET) ? $_GET[$field] : $default;
   }
 
   public function getPost($field = null, $default = null)
@@ -342,7 +321,7 @@ final class Request
     if (!isset($field)) {
       return $_POST;
     }
-    return key_exists($_POST[$field]) ? $_POST[$field] : $default;
+    return array_key_exists($field, $_POST) ? $_POST[$field] : $default;
   }
 }
 
@@ -367,7 +346,7 @@ final class Response
 
   public function gotoUrl($url, $httpCode = 302)
   {
-    if (ENV != 'WEB') {
+    if (env() != 'WEB') {
       return;
     }
     if (strcasecmp('http://', substr($url, 0, 7)) && strcasecmp('https://', substr($url, 0, 8))) {
@@ -421,7 +400,7 @@ final class Session
     if (!isset($key)) {
       return $_SESSION;
     }
-    return key_exists($key, $_SESSION) ? $_SESSION[$key] : $default;
+    return array_key_exists($key, $_SESSION) ? $_SESSION[$key] : $default;
   }
 
   public function set($key, $value)
@@ -573,8 +552,7 @@ final class View
   {
     $pathConfig = Config::get('path');
     $theme = Config::get('theme');
-    self::$_tplPath = \AZALEA_ROOT . '/' .
-        ($pathConfig['basepath'] != '' ? ($pathConfig['basepath'] . '/') : '') .
+    self::$_tplPath = ($pathConfig['basepath'] != '' ? ($pathConfig['basepath'] . '/') : '') .
         $pathConfig['views'] .
         ((isset($theme) && $theme != '') ? ('/' . $theme) : '');
     $this->assign([
@@ -588,7 +566,7 @@ final class View
   {
     $filename = self::$_tplPath . '/' . $tpl . '.phtml';
     if (!is_file($filename)) {
-      throw new Exception('View file "' . $tpl . '.phtml" not found.');
+      throw new Exception('View file `' . $tpl . '` not found.');
     }
     if (isset($vars) && is_array($vars)) {
       $this->assign($vars);
@@ -624,11 +602,13 @@ final class Config
   public static function load($filename)
   {
     $config = [];
-    if ($filename) {
+    if (is_string($filename)) {
       if (!is_readable($filename)) {
         die('Config file not found');
       }
       $config = parse_ini_file($filename, true);
+    } else if (is_array($filename)) {
+      $config = $filename;
     }
     $config += [
       'debug' => false,
@@ -666,7 +646,7 @@ final class Config
     if (!isset($key)) {
       return self::$_config;
     }
-    return key_exists($key, self::$_config) ? self::$_config[$key] : $default;
+    return array_key_exists($key, self::$_config) ? self::$_config[$key] : $default;
   }
 
   public static function set($key, $value)
@@ -728,7 +708,7 @@ final class E404Exception extends Exception
 
   public function setHeader()
   {
-    if (ENV == 'WEB') {
+    if (env() == 'WEB') {
       header('HTTP/1.1 404 Not Found');
     }
   }
@@ -743,7 +723,7 @@ final class E500Exception extends Exception
 
   public function setHeader()
   {
-    if (ENV == 'WEB') {
+    if (env() == 'WEB') {
       header('HTTP/1.1 500 Internal Server Error');
     }
   }
@@ -775,26 +755,31 @@ function url($path, $includeDomain = false)
   return ($includeDomain ? $domainUrl : '') . Bootstrap::getBaseUri() . ltrim($path, '/');
 }
 
+function env()
+{
+  return Bootstrap::getEnviron();
+}
+
 function randomString($len, $type = null) {}
 
 function getModel($name, ...$args)
 {
   static $list = [];
   $name = strtolower($name);
-  if (!isset($list[$name])) {
+  $key = $name . json_encode($args);
+  if (!isset($list[$key])) {
     $pathConfig = Config::get('path');
-    $modelFile =\AZALEA_ROOT . '/' .
-        ($pathConfig['basepath'] != '' ? ($pathConfig['basepath'] . '/') : '') .
+    $modelFile = ($pathConfig['basepath'] != '' ? ($pathConfig['basepath'] . '/') : '') .
         $pathConfig['models'] . '/' . $name . '.php';
     if (!is_file($modelFile)) {
-      throw new Exception('Model file not found.');
+      throw new Exception('Model file `' . $name . '` not found.');
     }
     require($modelFile);
     $modelClass = ucfirst($name) . 'Model';
     if (!class_exists($modelClass, false) || !is_subclass_of($modelClass, __NAMESPACE__ . '\Model')) {
-      throw new Exception('Model class not found.');
+      throw new Exception('Model class `' . $modelClass . '` not found.');
     }
-    $list[$name] = new $modelClass($name, ...$args);
+    $list[$key] = new $modelClass($name, ...$args);
   }
-  return $list[$name];
+  return $list[$key];
 }
