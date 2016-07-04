@@ -323,6 +323,11 @@ final class Request
     }
     return array_key_exists($field, $_POST) ? $_POST[$field] : $default;
   }
+
+  public function getCookie($field, $default = null)
+  {
+    return array_key_exists($field, $_COOKIE) ? $_COOKIE[$field] : $default;
+  }
 }
 
 final class Response
@@ -641,11 +646,13 @@ final class Config
     return $config;
   }
 
-  public static function get($key = null, $default = null)
+  public static function all()
   {
-    if (!isset($key)) {
-      return self::$_config;
-    }
+    return self::$_config;
+  }
+
+  public static function get($key, $default = null)
+  {
     return array_key_exists($key, self::$_config) ? self::$_config[$key] : $default;
   }
 
