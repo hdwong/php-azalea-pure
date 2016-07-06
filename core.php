@@ -63,7 +63,7 @@ final class Bootstrap
     date_default_timezone_set($config['timezone']);
     // set uri
     self::$_baseUri = (isset($_SERVER['SCRIPT_NAME']) ?
-        trim(dirname($_SERVER['SCRIPT_NAME']), '\\/') : '') . '/';
+        rtrim(dirname($_SERVER['SCRIPT_NAME']), '\\/') : '') . '/';
     self::$_uri = isset($_SERVER['PATH_INFO']) ?
         trim(preg_replace('/\/{2,}/', '/', $_SERVER['PATH_INFO']), '/') : '';
     // set session
