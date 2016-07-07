@@ -124,10 +124,10 @@ final class Bootstrap
       // session
       session_start();
       // dispatch
-      $result = self::dispatch();
-      $this->_process($result);
+      $this->_process(self::dispatch());
     } catch (\Exception $e) {
-      $this->_errorDispatch($e);
+      $this->_process($this->_errorDispatch($e));
+      die();
     }
   }
 
