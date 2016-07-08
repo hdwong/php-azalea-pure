@@ -193,12 +193,11 @@ final class Bootstrap
       if ($e instanceof Exception) {
         $e->setHeader();
       }
-      $result = self::dispatch([
+      return self::dispatch([
         'controller' => 'error',
         'action' => 'error',
         'arguments' => [ $e ],
       ]);
-      return $this->_process($result);
     } catch (Exception $ignoreEx) {}
     die($e->getMessage() . PHP_EOL);
   }
