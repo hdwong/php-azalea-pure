@@ -384,6 +384,10 @@ final class Response
     ob_clean();
     echo $body;
   }
+
+  public function setCookie($name, $value, $expire = 0)
+  {
+  }
 }
 
 final class Session
