@@ -416,9 +416,9 @@ final class Session
     $_SESSION[$key] = $value;
   }
 
-  public function clear()
+  public function clean()
   {
-    $_SESSION = [];
+    session_unset();
   }
 }
 
