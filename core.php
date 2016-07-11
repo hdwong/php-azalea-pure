@@ -2,7 +2,7 @@
 namespace Azalea;
 
 define(__NAMESPACE__ . '\VERSION', '1.0.0');
-define(__NAMESPACE__ . '\REQUEST_TIME', isset($_SERVER['REQUEST_TIME']) ? $_SERVER['REQUEST_TIME'] : time());
+define(__NAMESPACE__ . '\TIME', isset($_SERVER['REQUEST_TIME']) ? $_SERVER['REQUEST_TIME'] : time());
 
 final class Bootstrap
 {
@@ -226,15 +226,14 @@ class Controller
 
   protected function __init() {}
 
-  public function __get($name)
+  public function getRequest()
   {
-    if ($name == 'id') {
-      return $this->_name;
-    } else if ($name == 'req') {
       return Request::getInstance($this);
-    } else if ($name == 'res') {
+  }
+
+  public function getResponse()
+  {
       return Response::getInstance($this);
-    }
   }
 
   protected function getModel($name, ...$args)
@@ -664,7 +663,7 @@ final class Config
   }
 }
 
-class Exception extends \Exception
+abstract class Exception extends \Exception
 {
   const E_NOTICE = 1;
   const E_WARNING = 2;
@@ -767,6 +766,11 @@ function url($path, $includeDomain = false)
 function env()
 {
   return Bootstrap::getEnviron();
+}
+
+function ip()
+{
+  return '0.0.0.0';
 }
 
 function randomString($len, $type = null) {}
