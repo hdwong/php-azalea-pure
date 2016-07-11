@@ -3,8 +3,6 @@ namespace Azalea;
 
 define(__NAMESPACE__ . '\VERSION', '1.0.0');
 define(__NAMESPACE__ . '\REQUEST_TIME', isset($_SERVER['REQUEST_TIME']) ? $_SERVER['REQUEST_TIME'] : time());
-define(__NAMESPACE__ . '\E404', -404);
-define(__NAMESPACE__ . '\E500', -505);
 
 final class Bootstrap
 {
@@ -205,11 +203,7 @@ final class Bootstrap
   private function _process($result)
   {
     if (isset($result)) {
-      if ($result == E404) {
-        throw new E404Exception();
-      } else if ($result == E500) {
-        throw new E500Exception();
-      } else if (is_array($result) || is_object($result)) {
+      if (is_array($result) || is_object($result)) {
         echo json_encode($result);
       } else {
         echo strval($result);
@@ -259,6 +253,11 @@ class Controller
   protected function getSession()
   {
     return Session::getInstance();
+  }
+
+  protected function throw404($message = null)
+  {
+    throw new E404Exception($message);
   }
 }
 
